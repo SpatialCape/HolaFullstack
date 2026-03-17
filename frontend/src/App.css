@@ -1,16 +1,175 @@
+/* ===== Paleta sobria ===== */
+:root {
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --text: #2c3e50;
+  --text-sec: #6b7c93;
+  --border: #e1e4e8;
+  --accent: #4a5568;
+  --accent-h: #2d3748;
+  --danger: #c53030;
+  --radius: 6px;
+}
+
+/* ===== Layout ===== */
 .app {
-  max-width: 560px;
+  max-width: 580px;
   margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+/* ===== Header ===== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+/* ===== Botones ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-h);
+  border-color: var(--accent-h);
+  color: #fff;
+}
+
+.btn-outline {
+  background: transparent;
+}
+
+.btn-sm {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-sec);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: transparent;
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(197, 48, 48, 0.08);
+}
+
+.full {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ===== Login overlay ===== */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.panel {
+  background: var(--surface);
+  border-radius: 8px;
   padding: 2rem;
-  text-align: left;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
 }
 
-.app h1 {
-  font-size: 2rem;
-  margin-bottom: 1.5rem;
-  text-align: center;
+.panel h2 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+  color: var(--text);
 }
 
+.panel form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel input {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.panel input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--text-sec);
+  margin: 0;
+}
+
+.auth-error {
+  font-size: 0.85rem;
+  color: var(--danger);
+  margin: 0;
+}
+
+/* ===== Formulario agregar ===== */
 .add-form {
   display: flex;
   gap: 0.5rem;
@@ -19,166 +178,102 @@
 
 .add-form input {
   flex: 1;
-  padding: 0.6em 0.8em;
-  font-size: 1rem;
-  border-radius: 8px;
-  border: 1px solid #444;
-  background-color: #1a1a1a;
-  color: inherit;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
 }
 
 .add-form input:focus {
   outline: none;
-  border-color: #646cff;
+  border-color: var(--accent);
 }
 
-.add-form button {
-  padding: 0.6em 1.2em;
-  white-space: nowrap;
-}
-
-.error {
-  color: #f66;
+/* ===== Mensajes ===== */
+.error-msg {
+  color: var(--danger);
+  font-size: 0.9rem;
   margin-bottom: 1rem;
+}
+
+.status-msg {
+  color: var(--text-sec);
+  text-align: center;
+  padding: 2rem 0;
   font-size: 0.95rem;
 }
 
-.loading {
-  color: #888;
-  text-align: center;
-  padding: 2rem;
-}
-
+/* ===== Lista de tareas ===== */
 .task-list {
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
-.task-list .empty {
-  color: #888;
-  text-align: center;
-  padding: 2rem;
-}
-
 .task {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 8px;
-  border: 1px solid #333;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   margin-bottom: 0.5rem;
-  background-color: #1e1e1e;
 }
 
-.task.completed .task-title {
+.task.done .task-text {
   text-decoration: line-through;
-  opacity: 0.7;
+  color: var(--text-sec);
 }
 
 .task input[type="checkbox"] {
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1.1rem;
+  height: 1.1rem;
   cursor: pointer;
+  accent-color: var(--accent);
   flex-shrink: 0;
 }
 
-.task-title {
+.task-text {
   flex: 1;
-  min-width: 0;
+  font-size: 0.95rem;
   word-break: break-word;
 }
 
-.task .edit-input {
-  flex: 1;
-  min-width: 0;
-  padding: 0.4em 0.6em;
-  font-size: 0.95rem;
-  border-radius: 6px;
-  border: 1px solid #646cff;
-  background-color: #242424;
-  color: inherit;
+.check {
+  color: var(--text-sec);
+  margin-right: 0.4rem;
+  font-size: 0.85rem;
 }
 
-.btn-small {
-  padding: 0.35em 0.7em;
-  font-size: 0.85rem;
-  border-radius: 6px;
-  border: 1px solid #444;
-  background-color: #2a2a2a;
-  color: inherit;
-  cursor: pointer;
+.actions {
+  display: flex;
+  gap: 0.25rem;
   flex-shrink: 0;
 }
 
-.btn-small:hover:not(:disabled) {
-  border-color: #646cff;
-  background-color: #333;
+/* ===== Edicion inline ===== */
+.edit-row {
+  flex: 1;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 
-.btn-small:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.edit-row input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
 }
 
-.btn-small.primary {
-  border-color: #646cff;
-  background-color: #646cff;
-  color: #fff;
-}
-
-.btn-small.primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btn-small.danger {
-  border-color: #c44;
-  background-color: transparent;
-  color: #f66;
-}
-
-.btn-small.danger:hover:not(:disabled) {
-  background-color: rgba(200, 68, 68, 0.2);
-}
-
-@media (prefers-color-scheme: light) {
-  .add-form input {
-    border-color: #ccc;
-    background-color: #fff;
-    color: #213547;
-  }
-
-  .task {
-    border-color: #ddd;
-    background-color: #f5f5f5;
-  }
-
-  .task .edit-input {
-    background-color: #fff;
-    color: #213547;
-  }
-
-  .btn-small {
-    border-color: #ccc;
-    background-color: #eee;
-    color: #213547;
-  }
-
-  .btn-small:hover:not(:disabled) {
-    background-color: #e0e0e0;
-  }
-
-  .btn-small.primary {
-    color: #fff;
-  }
-
-  .btn-small.danger {
-    border-color: #a44;
-    color: #c44;
-  }
-
-  .btn-small.danger:hover:not(:disabled) {
-    background-color: rgba(200, 68, 68, 0.1);
-  }
+.edit-row input:focus {
+  outline: none;
 }

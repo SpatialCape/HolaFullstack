@@ -1,207 +1,352 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+const API = import.meta.env.VITE_API_URL || ''
+const POOL_ID = import.meta.env.VITE_COGNITO_USER_POOL_ID || ''
+const CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID || ''
+const REGION = POOL_ID.split('_')[0] || 'us-east-1'
+const COGNITO_URL = `https://cognito-idp.${REGION}.amazonaws.com/`
 
+/* ------------------------------------------------------------------ */
+/*  Cognito helpers (API directa, sin SDK extra)                      */
+/* ------------------------------------------------------------------ */
+async function cognitoFetch(action, body) {
+  const res = await fetch(COGNITO_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': `AWSCognitoIdentityProviderService.${action}`,
+    },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (data.__type) throw new Error(data.message || data.__type)
+  return data
+}
+
+function signIn(email, password) {
+  return cognitoFetch('InitiateAuth', {
+    AuthFlow: 'USER_PASSWORD_AUTH',
+    ClientId: CLIENT_ID,
+    AuthParameters: { USERNAME: email, PASSWORD: password },
+  })
+}
+
+function respondNewPassword(session, email, newPassword) {
+  return cognitoFetch('RespondToAuthChallenge', {
+    ChallengeName: 'NEW_PASSWORD_REQUIRED',
+    ClientId: CLIENT_ID,
+    Session: session,
+    ChallengeResponses: { USERNAME: email, NEW_PASSWORD: newPassword },
+  })
+}
+
+function refreshSession(refreshToken) {
+  return cognitoFetch('InitiateAuth', {
+    AuthFlow: 'REFRESH_TOKEN_AUTH',
+    ClientId: CLIENT_ID,
+    AuthParameters: { REFRESH_TOKEN: refreshToken },
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/*  Token helpers                                                      */
+/* ------------------------------------------------------------------ */
+function saveTokens(result) {
+  const auth = result.AuthenticationResult
+  if (!auth) return null
+  localStorage.setItem('idToken', auth.IdToken)
+  localStorage.setItem('accessToken', auth.AccessToken)
+  if (auth.RefreshToken) localStorage.setItem('refreshToken', auth.RefreshToken)
+  return auth.IdToken
+}
+
+function clearTokens() {
+  localStorage.removeItem('idToken')
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('refreshToken')
+}
+
+function isTokenExpired(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.exp * 1000 < Date.now()
+  } catch {
+    return true
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  App                                                                */
+/* ------------------------------------------------------------------ */
 function App() {
+  const [token, setToken] = useState(null)
+  const [showLogin, setShowLogin] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [newPwd, setNewPwd] = useState('')
+  const [session, setSession] = useState(null)
+  const [needNewPwd, setNeedNewPwd] = useState(false)
+  const [authError, setAuthError] = useState(null)
+  const [authLoading, setAuthLoading] = useState(false)
+
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [newTitle, setNewTitle] = useState('')
   const [adding, setAdding] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [editingTitle, setEditingTitle] = useState('')
+  const [editId, setEditId] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
 
-  async function fetchTasks() {
-    if (!API_BASE) {
-      setError('Configura VITE_API_URL (ej. en .env) con la URL de la API.')
-      setLoading(false)
-      return
+  const isAdmin = !!token
+
+  // Restaurar sesion guardada
+  useEffect(() => {
+    const stored = localStorage.getItem('idToken')
+    if (stored && !isTokenExpired(stored)) {
+      setToken(stored)
+    } else if (stored) {
+      const refresh = localStorage.getItem('refreshToken')
+      if (refresh) {
+        refreshSession(refresh)
+          .then((r) => { const t = saveTokens(r); t ? setToken(t) : clearTokens() })
+          .catch(() => clearTokens())
+      } else {
+        clearTokens()
+      }
     }
-    setError(null)
+  }, [])
+
+  // Cargar tareas (publico)
+  const fetchTasks = useCallback(async () => {
+    if (!API) { setError('Configura VITE_API_URL'); setLoading(false); return }
     try {
-      const res = await fetch(`${API_BASE}/tasks`)
+      const res = await fetch(`${API}/tasks`)
       if (!res.ok) throw new Error(res.statusText)
-      const data = await res.json()
-      setTasks(Array.isArray(data) ? data : [])
+      setTasks(await res.json())
+      setError(null)
     } catch (err) {
-      setError(err.message || 'Error al cargar tareas')
+      setError(err.message)
       setTasks([])
     } finally {
       setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    fetchTasks()
   }, [])
 
+  useEffect(() => { fetchTasks() }, [fetchTasks])
+
+  // Headers con token (refresca si expiro)
+  async function authHeaders() {
+    let t = token
+    if (!t || isTokenExpired(t)) {
+      const refresh = localStorage.getItem('refreshToken')
+      if (refresh) {
+        try {
+          const r = await refreshSession(refresh)
+          t = saveTokens(r)
+          setToken(t)
+        } catch {
+          clearTokens(); setToken(null); return null
+        }
+      } else {
+        clearTokens(); setToken(null); return null
+      }
+    }
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` }
+  }
+
+  // --- Auth ---
+  function resetLogin() {
+    setEmail(''); setPassword(''); setNewPwd('')
+    setSession(null); setNeedNewPwd(false); setAuthError(null)
+  }
+
+  async function handleLogin(e) {
+    e.preventDefault()
+    setAuthError(null); setAuthLoading(true)
+    try {
+      const result = await signIn(email, password)
+      if (result.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+        setSession(result.Session)
+        setNeedNewPwd(true)
+      } else {
+        const t = saveTokens(result)
+        setToken(t); setShowLogin(false); resetLogin()
+      }
+    } catch (err) {
+      setAuthError(err.message)
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  async function handleNewPassword(e) {
+    e.preventDefault()
+    setAuthError(null); setAuthLoading(true)
+    try {
+      const result = await respondNewPassword(session, email, newPwd)
+      const t = saveTokens(result)
+      setToken(t); setShowLogin(false); resetLogin()
+    } catch (err) {
+      setAuthError(err.message)
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  function logout() { clearTokens(); setToken(null) }
+
+  // --- CRUD (protegido) ---
   async function addTask(e) {
     e.preventDefault()
-    const title = newTaskTitle.trim()
-    if (!title || !API_BASE || adding) return
+    const title = newTitle.trim()
+    if (!title || adding) return
+    const h = await authHeaders()
+    if (!h) return
     setAdding(true)
-    setError(null)
     try {
-      const res = await fetch(`${API_BASE}/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      })
+      const res = await fetch(`${API}/tasks`, { method: 'POST', headers: h, body: JSON.stringify({ title }) })
       if (!res.ok) throw new Error(res.statusText)
-      setNewTaskTitle('')
-      await fetchTasks()
-    } catch (err) {
-      setError(err.message || 'Error al crear la tarea')
-    } finally {
-      setAdding(false)
-    }
+      setNewTitle(''); await fetchTasks()
+    } catch (err) { setError(err.message) }
+    finally { setAdding(false) }
   }
 
   async function toggleCompleted(task) {
-    if (!API_BASE) return
-    setError(null)
+    const h = await authHeaders()
+    if (!h) return
     try {
-      const res = await fetch(`${API_BASE}/tasks/${task.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completed: !task.completed }),
+      const res = await fetch(`${API}/tasks/${task.id}`, {
+        method: 'PUT', headers: h, body: JSON.stringify({ completed: !task.completed }),
       })
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
-    } catch (err) {
-      setError(err.message || 'Error al actualizar')
-    }
+    } catch (err) { setError(err.message) }
   }
 
   async function saveEdit(id) {
-    const title = editingTitle.trim()
-    if (title === '' || !API_BASE) return
-    setError(null)
+    const title = editTitle.trim()
+    if (!title) return
+    const h = await authHeaders()
+    if (!h) return
     try {
-      const res = await fetch(`${API_BASE}/tasks/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+      const res = await fetch(`${API}/tasks/${id}`, {
+        method: 'PUT', headers: h, body: JSON.stringify({ title }),
       })
       if (!res.ok) throw new Error(res.statusText)
-      setEditingId(null)
-      setEditingTitle('')
-      await fetchTasks()
-    } catch (err) {
-      setError(err.message || 'Error al guardar')
-    }
+      setEditId(null); setEditTitle(''); await fetchTasks()
+    } catch (err) { setError(err.message) }
   }
 
   async function deleteTask(id) {
-    if (!API_BASE || !window.confirm('¿Eliminar esta tarea?')) return
-    setError(null)
+    if (!window.confirm('¿Eliminar esta tarea?')) return
+    const h = await authHeaders()
+    if (!h) return
     try {
-      const res = await fetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' })
+      const res = await fetch(`${API}/tasks/${id}`, { method: 'DELETE', headers: h })
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
-    } catch (err) {
-      setError(err.message || 'Error al eliminar')
-    }
+    } catch (err) { setError(err.message) }
   }
 
-  function startEdit(task) {
-    setEditingId(task.id)
-    setEditingTitle(task.title)
-  }
-
-  function cancelEdit() {
-    setEditingId(null)
-    setEditingTitle('')
-  }
-
+  // --- Render ---
   return (
     <div className="app">
-      <h1>Lista de tareas</h1>
+      <header className="header">
+        <h1>Tareas</h1>
+        {isAdmin ? (
+          <button className="btn btn-outline" onClick={logout}>Cerrar sesion</button>
+        ) : (
+          <button className="btn btn-outline" onClick={() => setShowLogin(true)}>Administrar</button>
+        )}
+      </header>
 
-      <form className="add-form" onSubmit={addTask}>
-        <input
-          type="text"
-          placeholder="Nueva tarea..."
-          value={newTaskTitle}
-          onChange={(e) => setNewTaskTitle(e.target.value)}
-          disabled={!API_BASE || adding}
-          aria-label="Título de la nueva tarea"
-        />
-        <button type="submit" disabled={!newTaskTitle.trim() || adding}>
-          {adding ? 'Añadiendo…' : 'Añadir'}
-        </button>
-      </form>
+      {/* Login modal */}
+      {showLogin && !isAdmin && (
+        <div className="overlay" onClick={() => { setShowLogin(false); resetLogin() }}>
+          <div className="panel" onClick={(e) => e.stopPropagation()}>
+            <h2>{needNewPwd ? 'Nueva contraseña' : 'Iniciar sesion'}</h2>
+            {!needNewPwd ? (
+              <form onSubmit={handleLogin}>
+                <input type="email" placeholder="Email" value={email}
+                  onChange={(e) => setEmail(e.target.value)} required autoFocus />
+                <input type="password" placeholder="Contraseña" value={password}
+                  onChange={(e) => setPassword(e.target.value)} required />
+                {authError && <p className="auth-error">{authError}</p>}
+                <button className="btn btn-primary full" type="submit" disabled={authLoading}>
+                  {authLoading ? 'Entrando...' : 'Entrar'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleNewPassword}>
+                <p className="hint">Establece tu nueva contraseña permanente.</p>
+                <input type="password" placeholder="Nueva contraseña" value={newPwd}
+                  onChange={(e) => setNewPwd(e.target.value)} required autoFocus />
+                {authError && <p className="auth-error">{authError}</p>}
+                <button className="btn btn-primary full" type="submit" disabled={authLoading}>
+                  {authLoading ? 'Guardando...' : 'Guardar contraseña'}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
-      {error && <p className="error">{error}</p>}
+      {/* Formulario para agregar (solo admin) */}
+      {isAdmin && (
+        <form className="add-form" onSubmit={addTask}>
+          <input type="text" placeholder="Nueva tarea..." value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)} disabled={adding} />
+          <button className="btn btn-primary" type="submit" disabled={!newTitle.trim() || adding}>
+            {adding ? 'Añadiendo...' : 'Añadir'}
+          </button>
+        </form>
+      )}
+
+      {error && <p className="error-msg">{error}</p>}
 
       {loading ? (
-        <p className="loading">Cargando tareas…</p>
+        <p className="status-msg">Cargando tareas...</p>
+      ) : tasks.length === 0 ? (
+        <p className="status-msg">No hay tareas{isAdmin ? '. Añade una arriba.' : '.'}</p>
       ) : (
         <ul className="task-list">
-          {tasks.length === 0 && !error && (
-            <li className="empty">No hay tareas. Añade una arriba.</li>
-          )}
           {tasks.map((task) => (
-            <li
-              key={task.id}
-              className={`task ${task.completed ? 'completed' : ''}`}
-            >
-              <input
-                type="checkbox"
-                checked={task.completed}
-                onChange={() => toggleCompleted(task)}
-                disabled={!API_BASE}
-                aria-label={`Marcar como ${task.completed ? 'pendiente' : 'completada'}`}
-              />
-              {editingId === task.id ? (
-                <>
-                  <input
-                    type="text"
-                    className="edit-input"
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
+            <li key={task.id} className={`task${task.completed ? ' done' : ''}`}>
+              {isAdmin && (
+                <input type="checkbox" checked={task.completed}
+                  onChange={() => toggleCompleted(task)} />
+              )}
+
+              {editId === task.id ? (
+                <div className="edit-row">
+                  <input type="text" value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') saveEdit(task.id)
-                      if (e.key === 'Escape') cancelEdit()
-                    }}
-                    autoFocus
-                    aria-label="Editar título"
-                  />
-                  <button
-                    type="button"
-                    className="btn-small primary"
-                    onClick={() => saveEdit(task.id)}
-                  >
-                    Guardar
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-small"
-                    onClick={cancelEdit}
-                  >
+                      if (e.key === 'Escape') { setEditId(null); setEditTitle('') }
+                    }} autoFocus />
+                  <button className="btn btn-sm" onClick={() => saveEdit(task.id)}>Guardar</button>
+                  <button className="btn btn-sm btn-ghost" onClick={() => { setEditId(null); setEditTitle('') }}>
                     Cancelar
                   </button>
-                </>
+                </div>
               ) : (
                 <>
-                  <span className="task-title">{task.title}</span>
-                  <button
-                    type="button"
-                    className="btn-small"
-                    onClick={() => startEdit(task)}
-                    disabled={!API_BASE}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-small danger"
-                    onClick={() => deleteTask(task.id)}
-                    disabled={!API_BASE}
-                  >
-                    Eliminar
-                  </button>
+                  <span className="task-text">
+                    {!isAdmin && task.completed && <span className="check">&#10003;</span>}
+                    {task.title}
+                  </span>
+                  {isAdmin && (
+                    <span className="actions">
+                      <button className="btn btn-sm" onClick={() => { setEditId(task.id); setEditTitle(task.title) }}>
+                        Editar
+                      </button>
+                      <button className="btn btn-sm btn-danger" onClick={() => deleteTask(task.id)}>
+                        Eliminar
+                      </button>
+                    </span>
+                  )}
                 </>
               )}
             </li>

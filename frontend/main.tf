@@ -1,13 +1,8 @@
 # =============================================================================
 # Frontend: Amplify (build y hosting del React desde Git)
-# Repositorio: puede ser monorepo (backend + frontend). Si el frontend está en
-# la subcarpeta "frontend", se usa app_root = "frontend" (variable por defecto).
-# Requiere backend desplegado (variable api_url).
+# Requiere backend desplegado (variables api_url, cognito_user_pool_id, cognito_client_id).
 # Despliegue: terraform init && terraform apply
 # El código React se recompila en cada git push a la rama configurada.
-#
-# Permisos IAM: el usuario que ejecuta Terraform debe tener permisos Amplify.
-# Ver iam-terraform-frontend-policy.json (adjuntar esa política al usuario IAM).
 # =============================================================================
 
 terraform {
@@ -24,9 +19,11 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# URL de la API (salida del backend: terraform output -raw api_url)
+# ---------------------------------------------------------------------------
+# Variables
+# ---------------------------------------------------------------------------
 variable "api_url" {
-  description = "URL base de la API de tareas (backend)"
+  description = "URL base de la API de tareas (backend: terraform output -raw api_url)"
   type        = string
 }
 
@@ -37,8 +34,9 @@ variable "github_token" {
 }
 
 variable "repository" {
-  description = "URL del repositorio Git (puede ser monorepo con backend y frontend; Amplify usará la carpeta indicada en app_root)"
+  description = "URL del repositorio Git"
   type        = string
+  default     = "https://github.com/SpatialCape/HolaFullstack"
 }
 
 variable "branch_name" {
@@ -48,12 +46,24 @@ variable "branch_name" {
 }
 
 variable "app_root" {
-  description = "Carpeta del frontend dentro del repo. Para monorepo (backend + frontend) usar 'frontend'. Dejar vacío si la raíz del repo es el frontend."
+  description = "Carpeta del frontend dentro del repo (vacío si la raíz es el frontend)"
   type        = string
   default     = "frontend"
 }
 
-# Build spec en locals para evitar ternario con dos heredocs (el parser falla).
+variable "cognito_user_pool_id" {
+  description = "ID del User Pool de Cognito (backend: terraform output -raw cognito_user_pool_id)"
+  type        = string
+}
+
+variable "cognito_client_id" {
+  description = "ID del cliente de Cognito (backend: terraform output -raw cognito_client_id)"
+  type        = string
+}
+
+# ---------------------------------------------------------------------------
+# Build spec
+# ---------------------------------------------------------------------------
 locals {
   build_spec_monorepo = <<-EOT
 version: 1
@@ -96,13 +106,20 @@ EOT
   build_spec = var.app_root != "" ? local.build_spec_monorepo : local.build_spec_simple
 }
 
+# ---------------------------------------------------------------------------
+# Amplify
+# ---------------------------------------------------------------------------
 resource "aws_amplify_app" "hola_fullstack" {
   name        = "hola-fullstack"
   repository  = var.repository
   oauth_token = var.github_token
 
   environment_variables = merge(
-    { VITE_API_URL = var.api_url },
+    {
+      VITE_API_URL              = var.api_url
+      VITE_COGNITO_USER_POOL_ID = var.cognito_user_pool_id
+      VITE_COGNITO_CLIENT_ID    = var.cognito_client_id
+    },
     var.app_root != "" ? { AMPLIFY_MONOREPO_APP_ROOT = var.app_root } : {}
   )
 
@@ -120,6 +137,9 @@ resource "aws_amplify_branch" "main" {
   branch_name = var.branch_name
 }
 
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
 output "amplify_app_id" {
   description = "ID de la app Amplify"
   value       = aws_amplify_app.hola_fullstack.id
