@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 
-const API = import.meta.env.VITE_API_URL || ''
+const API = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 const POOL_ID = import.meta.env.VITE_COGNITO_USER_POOL_ID || ''
 const CLIENT_ID = import.meta.env.VITE_COGNITO_CLIENT_ID || ''
 const REGION = POOL_ID.split('_')[0] || 'us-east-1'
