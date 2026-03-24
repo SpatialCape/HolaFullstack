@@ -77,6 +77,33 @@ function isTokenExpired(token) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Offline helpers (localStorage queue)                               */
+/* ------------------------------------------------------------------ */
+function getPendingOps() {
+  try { return JSON.parse(localStorage.getItem('pendingOps') || '[]') }
+  catch { return [] }
+}
+
+function savePendingOps(ops) {
+  localStorage.setItem('pendingOps', JSON.stringify(ops))
+}
+
+function addPendingOp(op) {
+  const ops = getPendingOps()
+  ops.push(op)
+  savePendingOps(ops)
+}
+
+function getCachedTasks() {
+  try { return JSON.parse(localStorage.getItem('cachedTasks') || '[]') }
+  catch { return [] }
+}
+
+function saveCachedTasks(tasks) {
+  localStorage.setItem('cachedTasks', JSON.stringify(tasks))
+}
+
+/* ------------------------------------------------------------------ */
 /*  App                                                                */
 /* ------------------------------------------------------------------ */
 function App() {
@@ -98,7 +125,56 @@ function App() {
   const [editId, setEditId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
 
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const [showReconnect, setShowReconnect] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+
   const isAdmin = !!token
+
+  // Detectar conexion / desconexion
+  useEffect(() => {
+    function handleOffline() { setIsOnline(false) }
+    function handleOnline() {
+      setIsOnline(true)
+      setShowReconnect(true)
+      syncPendingOps()
+      setTimeout(() => setShowReconnect(false), 4000)
+    }
+    window.addEventListener('offline', handleOffline)
+    window.addEventListener('online', handleOnline)
+    return () => {
+      window.removeEventListener('offline', handleOffline)
+      window.removeEventListener('online', handleOnline)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  // Sincronizar operaciones pendientes
+  async function syncPendingOps() {
+    const ops = getPendingOps()
+    if (ops.length === 0) { fetchTasks(); return }
+    setSyncing(true)
+    for (const op of ops) {
+      try {
+        const h = await authHeaders()
+        if (!h) break
+        if (op.type === 'add') {
+          await fetch(`${API}/tasks`, { method: 'POST', headers: h, body: JSON.stringify({ title: op.title }) })
+        } else if (op.type === 'toggle') {
+          await fetch(`${API}/tasks/${op.id}`, { method: 'PUT', headers: h, body: JSON.stringify({ completed: op.completed }) })
+        } else if (op.type === 'edit') {
+          await fetch(`${API}/tasks/${op.id}`, { method: 'PUT', headers: h, body: JSON.stringify({ title: op.title }) })
+        } else if (op.type === 'delete') {
+          await fetch(`${API}/tasks/${op.id}`, { method: 'DELETE', headers: h })
+        }
+      } catch {
+        // si falla una op individual, continuar con las demas
+      }
+    }
+    savePendingOps([])
+    setSyncing(false)
+    fetchTasks()
+  }
 
   // Restaurar sesion guardada
   useEffect(() => {
@@ -117,17 +193,30 @@ function App() {
     }
   }, [])
 
-  // Cargar tareas (publico)
+  // Cargar tareas (publico) — con cache offline
   const fetchTasks = useCallback(async () => {
     if (!API) { setError('Configura VITE_API_URL'); setLoading(false); return }
+    if (!navigator.onLine) {
+      setTasks(getCachedTasks())
+      setLoading(false)
+      return
+    }
     try {
       const res = await fetch(`${API}/tasks`)
       if (!res.ok) throw new Error(res.statusText)
-      setTasks(await res.json())
+      const data = await res.json()
+      setTasks(data)
+      saveCachedTasks(data)
       setError(null)
     } catch (err) {
-      setError(err.message)
-      setTasks([])
+      // Si falla la red, usar cache
+      const cached = getCachedTasks()
+      if (cached.length > 0) {
+        setTasks(cached)
+      } else {
+        setError(err.message)
+        setTasks([])
+      }
     } finally {
       setLoading(false)
     }
@@ -196,11 +285,20 @@ function App() {
 
   function logout() { clearTokens(); setToken(null) }
 
-  // --- CRUD (protegido) ---
+  // --- CRUD (protegido, con soporte offline) ---
   async function addTask(e) {
     e.preventDefault()
     const title = newTitle.trim()
     if (!title || adding) return
+
+    if (!navigator.onLine) {
+      const tempTask = { id: 'temp-' + Date.now(), title, completed: false, createdAt: new Date().toISOString(), _pending: true }
+      setTasks(prev => { const next = [...prev, tempTask]; saveCachedTasks(next); return next })
+      addPendingOp({ type: 'add', title })
+      setNewTitle('')
+      return
+    }
+
     const h = await authHeaders()
     if (!h) return
     setAdding(true)
@@ -213,6 +311,16 @@ function App() {
   }
 
   async function toggleCompleted(task) {
+    if (!navigator.onLine) {
+      setTasks(prev => {
+        const next = prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t)
+        saveCachedTasks(next)
+        return next
+      })
+      addPendingOp({ type: 'toggle', id: task.id, completed: !task.completed })
+      return
+    }
+
     const h = await authHeaders()
     if (!h) return
     try {
@@ -227,6 +335,18 @@ function App() {
   async function saveEdit(id) {
     const title = editTitle.trim()
     if (!title) return
+
+    if (!navigator.onLine) {
+      setTasks(prev => {
+        const next = prev.map(t => t.id === id ? { ...t, title } : t)
+        saveCachedTasks(next)
+        return next
+      })
+      addPendingOp({ type: 'edit', id, title })
+      setEditId(null); setEditTitle('')
+      return
+    }
+
     const h = await authHeaders()
     if (!h) return
     try {
@@ -240,6 +360,17 @@ function App() {
 
   async function deleteTask(id) {
     if (!window.confirm('¿Eliminar esta tarea?')) return
+
+    if (!navigator.onLine) {
+      setTasks(prev => {
+        const next = prev.filter(t => t.id !== id)
+        saveCachedTasks(next)
+        return next
+      })
+      addPendingOp({ type: 'delete', id })
+      return
+    }
+
     const h = await authHeaders()
     if (!h) return
     try {
@@ -252,6 +383,18 @@ function App() {
   // --- Render ---
   return (
     <div className="app">
+      {/* Banners de conexion */}
+      {!isOnline && (
+        <div className="offline-banner">
+          Sin conexion — Estas en modo desconectado. Los cambios se guardaran al reconectar.
+        </div>
+      )}
+      {showReconnect && (
+        <div className="reconnect-banner">
+          {syncing ? 'Conexion reestablecida, guardando cambios...' : 'Conexion reestablecida. Cambios guardados.'}
+        </div>
+      )}
+
       <header className="header">
         <h1>Tareas</h1>
         {isAdmin ? (
@@ -312,7 +455,7 @@ function App() {
       ) : (
         <ul className="task-list">
           {tasks.map((task) => (
-            <li key={task.id} className={`task${task.completed ? ' done' : ''}`}>
+            <li key={task.id} className={`task${task.completed ? ' done' : ''}${task._pending ? ' pending' : ''}`}>
               {isAdmin && (
                 <input type="checkbox" checked={task.completed}
                   onChange={() => toggleCompleted(task)} />

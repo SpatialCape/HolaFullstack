@@ -277,3 +277,39 @@
 .edit-row input:focus {
   outline: none;
 }
+
+/* ===== Banners de conexion ===== */
+.offline-banner,
+.reconnect-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  padding: 0.7rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 500;
+  animation: slideDown 0.3s ease;
+}
+
+.offline-banner {
+  background: #e53e3e;
+  color: #fff;
+}
+
+.reconnect-banner {
+  background: #38a169;
+  color: #fff;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Marca visual para tareas pendientes de sincronizar */
+.task.pending {
+  opacity: 0.7;
+  border-left: 3px solid #e53e3e;
+}
