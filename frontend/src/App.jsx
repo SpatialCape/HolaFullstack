@@ -103,6 +103,10 @@ function saveCachedTasks(tasks) {
   localStorage.setItem('cachedTasks', JSON.stringify(tasks))
 }
 
+function isNetworkError(err) {
+  return !navigator.onLine || err.name === 'TypeError' || err.message === 'Failed to fetch'
+}
+
 /* ------------------------------------------------------------------ */
 /*  App                                                                */
 /* ------------------------------------------------------------------ */
@@ -234,7 +238,12 @@ function App() {
           const r = await refreshSession(refresh)
           t = saveTokens(r)
           setToken(t)
-        } catch {
+        } catch (err) {
+          if (isNetworkError(err)) {
+            // Sin red: no borrar tokens, devolver el token existente para que el CRUD maneje el error
+            setIsOnline(false)
+            return t ? { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` } : null
+          }
           clearTokens(); setToken(null); return null
         }
       } else {
@@ -285,20 +294,51 @@ function App() {
 
   function logout() { clearTokens(); setToken(null) }
 
+  // --- Helpers offline ---
+  function queueAdd(title) {
+    const tempTask = { id: 'temp-' + Date.now(), title, completed: false, createdAt: new Date().toISOString(), _pending: true }
+    setTasks(prev => { const next = [...prev, tempTask]; saveCachedTasks(next); return next })
+    addPendingOp({ type: 'add', title })
+    setNewTitle('')
+    setIsOnline(false)
+  }
+
+  function queueToggle(task) {
+    setTasks(prev => {
+      const next = prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t)
+      saveCachedTasks(next)
+      return next
+    })
+    addPendingOp({ type: 'toggle', id: task.id, completed: !task.completed })
+    setIsOnline(false)
+  }
+
+  function queueEdit(id, title) {
+    setTasks(prev => {
+      const next = prev.map(t => t.id === id ? { ...t, title } : t)
+      saveCachedTasks(next)
+      return next
+    })
+    addPendingOp({ type: 'edit', id, title })
+    setEditId(null); setEditTitle('')
+    setIsOnline(false)
+  }
+
+  function queueDelete(id) {
+    setTasks(prev => {
+      const next = prev.filter(t => t.id !== id)
+      saveCachedTasks(next)
+      return next
+    })
+    addPendingOp({ type: 'delete', id })
+    setIsOnline(false)
+  }
+
   // --- CRUD (protegido, con soporte offline) ---
   async function addTask(e) {
     e.preventDefault()
     const title = newTitle.trim()
     if (!title || adding) return
-
-    if (!navigator.onLine) {
-      const tempTask = { id: 'temp-' + Date.now(), title, completed: false, createdAt: new Date().toISOString(), _pending: true }
-      setTasks(prev => { const next = [...prev, tempTask]; saveCachedTasks(next); return next })
-      addPendingOp({ type: 'add', title })
-      setNewTitle('')
-      return
-    }
-
     const h = await authHeaders()
     if (!h) return
     setAdding(true)
@@ -306,21 +346,13 @@ function App() {
       const res = await fetch(`${API}/tasks`, { method: 'POST', headers: h, body: JSON.stringify({ title }) })
       if (!res.ok) throw new Error(res.statusText)
       setNewTitle(''); await fetchTasks()
-    } catch (err) { setError(err.message) }
-    finally { setAdding(false) }
+    } catch (err) {
+      if (isNetworkError(err)) { queueAdd(title) }
+      else { setError(err.message) }
+    } finally { setAdding(false) }
   }
 
   async function toggleCompleted(task) {
-    if (!navigator.onLine) {
-      setTasks(prev => {
-        const next = prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t)
-        saveCachedTasks(next)
-        return next
-      })
-      addPendingOp({ type: 'toggle', id: task.id, completed: !task.completed })
-      return
-    }
-
     const h = await authHeaders()
     if (!h) return
     try {
@@ -329,24 +361,15 @@ function App() {
       })
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      if (isNetworkError(err)) { queueToggle(task) }
+      else { setError(err.message) }
+    }
   }
 
   async function saveEdit(id) {
     const title = editTitle.trim()
     if (!title) return
-
-    if (!navigator.onLine) {
-      setTasks(prev => {
-        const next = prev.map(t => t.id === id ? { ...t, title } : t)
-        saveCachedTasks(next)
-        return next
-      })
-      addPendingOp({ type: 'edit', id, title })
-      setEditId(null); setEditTitle('')
-      return
-    }
-
     const h = await authHeaders()
     if (!h) return
     try {
@@ -355,29 +378,24 @@ function App() {
       })
       if (!res.ok) throw new Error(res.statusText)
       setEditId(null); setEditTitle(''); await fetchTasks()
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      if (isNetworkError(err)) { queueEdit(id, title) }
+      else { setError(err.message) }
+    }
   }
 
   async function deleteTask(id) {
     if (!window.confirm('¿Eliminar esta tarea?')) return
-
-    if (!navigator.onLine) {
-      setTasks(prev => {
-        const next = prev.filter(t => t.id !== id)
-        saveCachedTasks(next)
-        return next
-      })
-      addPendingOp({ type: 'delete', id })
-      return
-    }
-
     const h = await authHeaders()
     if (!h) return
     try {
       const res = await fetch(`${API}/tasks/${id}`, { method: 'DELETE', headers: h })
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      if (isNetworkError(err)) { queueDelete(id) }
+      else { setError(err.message) }
+    }
   }
 
   // --- Render ---
