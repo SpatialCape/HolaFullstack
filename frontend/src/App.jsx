@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import './App.css'
 
 const API = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
@@ -134,6 +134,7 @@ function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [showReconnect, setShowReconnect] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const syncLock = useRef(false)
 
   const isAdmin = !!token
 
@@ -146,10 +147,13 @@ function App() {
     setTimeout(() => setShowReconnect(false), 4000)
   }
 
-  // Sincronizar operaciones pendientes
+  // Sincronizar operaciones pendientes (con lock para evitar duplicados)
   async function syncPendingOps() {
+    if (syncLock.current) return
+    syncLock.current = true
     const ops = getPendingOps()
-    if (ops.length === 0) { await fetchTasks(); return }
+    if (ops.length === 0) { syncLock.current = false; await fetchTasks(); return }
+    savePendingOps([]) // limpiar cola ANTES de procesar para evitar duplicados
     setSyncing(true)
     for (const op of ops) {
       try {
@@ -168,8 +172,8 @@ function App() {
         // si falla una op individual, continuar con las demas
       }
     }
-    savePendingOps([])
     setSyncing(false)
+    syncLock.current = false
     await fetchTasks()
   }
 
