@@ -200,11 +200,6 @@ function App() {
   // Cargar tareas (publico) — con cache offline
   const fetchTasks = useCallback(async () => {
     if (!API) { setError('Configura VITE_API_URL'); setLoading(false); return }
-    if (!navigator.onLine) {
-      setTasks(getCachedTasks())
-      setLoading(false)
-      return
-    }
     try {
       const res = await fetch(`${API}/tasks`)
       if (!res.ok) throw new Error(res.statusText)
@@ -213,9 +208,13 @@ function App() {
       saveCachedTasks(data)
       setError(null)
     } catch (err) {
-      // Si falla la red, usar cache
       const cached = getCachedTasks()
-      if (cached.length > 0) {
+      if (isNetworkError(err)) {
+        // Sin red: mostrar cache y activar banner offline
+        setIsOnline(false)
+        setTasks(cached.length > 0 ? cached : [])
+        setError(null)
+      } else if (cached.length > 0) {
         setTasks(cached)
       } else {
         setError(err.message)
@@ -295,12 +294,17 @@ function App() {
   function logout() { clearTokens(); setToken(null) }
 
   // --- Helpers offline ---
+  function goOffline() {
+    setIsOnline(false)
+    setError(null)
+  }
+
   function queueAdd(title) {
     const tempTask = { id: 'temp-' + Date.now(), title, completed: false, createdAt: new Date().toISOString(), _pending: true }
     setTasks(prev => { const next = [...prev, tempTask]; saveCachedTasks(next); return next })
     addPendingOp({ type: 'add', title })
     setNewTitle('')
-    setIsOnline(false)
+    goOffline()
   }
 
   function queueToggle(task) {
@@ -310,7 +314,7 @@ function App() {
       return next
     })
     addPendingOp({ type: 'toggle', id: task.id, completed: !task.completed })
-    setIsOnline(false)
+    goOffline()
   }
 
   function queueEdit(id, title) {
@@ -321,7 +325,7 @@ function App() {
     })
     addPendingOp({ type: 'edit', id, title })
     setEditId(null); setEditTitle('')
-    setIsOnline(false)
+    goOffline()
   }
 
   function queueDelete(id) {
@@ -331,7 +335,7 @@ function App() {
       return next
     })
     addPendingOp({ type: 'delete', id })
-    setIsOnline(false)
+    goOffline()
   }
 
   // --- CRUD (protegido, con soporte offline) ---
