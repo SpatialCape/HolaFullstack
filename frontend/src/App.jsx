@@ -104,7 +104,9 @@ function saveCachedTasks(tasks) {
 }
 
 function isNetworkError(err) {
-  return !navigator.onLine || err.name === 'TypeError' || err.message === 'Failed to fetch'
+  if (!navigator.onLine) return true
+  const msg = String(err?.message || '').toLowerCase()
+  return err?.name === 'TypeError' || msg.includes('fetch') || msg.includes('network') || msg.includes('load failed')
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,7 +232,10 @@ function App() {
   // Headers con token (refresca si expiro)
   async function authHeaders() {
     let t = token
-    if (!t || isTokenExpired(t)) {
+    if (!t) return null
+    if (isTokenExpired(t)) {
+      // Si ya sabemos que no hay red, devolver token existente sin intentar refrescar
+      if (!isOnline) return { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` }
       const refresh = localStorage.getItem('refreshToken')
       if (refresh) {
         try {
@@ -239,9 +244,8 @@ function App() {
           setToken(t)
         } catch (err) {
           if (isNetworkError(err)) {
-            // Sin red: no borrar tokens, devolver el token existente para que el CRUD maneje el error
             setIsOnline(false)
-            return t ? { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` } : null
+            return { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` }
           }
           clearTokens(); setToken(null); return null
         }
@@ -343,6 +347,7 @@ function App() {
     e.preventDefault()
     const title = newTitle.trim()
     if (!title || adding) return
+    if (!isOnline) { queueAdd(title); return }
     const h = await authHeaders()
     if (!h) return
     setAdding(true)
@@ -351,12 +356,12 @@ function App() {
       if (!res.ok) throw new Error(res.statusText)
       setNewTitle(''); await fetchTasks()
     } catch (err) {
-      if (isNetworkError(err)) { queueAdd(title) }
-      else { setError(err.message) }
+      queueAdd(title)
     } finally { setAdding(false) }
   }
 
   async function toggleCompleted(task) {
+    if (!isOnline) { queueToggle(task); return }
     const h = await authHeaders()
     if (!h) return
     try {
@@ -366,14 +371,14 @@ function App() {
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
     } catch (err) {
-      if (isNetworkError(err)) { queueToggle(task) }
-      else { setError(err.message) }
+      queueToggle(task)
     }
   }
 
   async function saveEdit(id) {
     const title = editTitle.trim()
     if (!title) return
+    if (!isOnline) { queueEdit(id, title); return }
     const h = await authHeaders()
     if (!h) return
     try {
@@ -383,13 +388,13 @@ function App() {
       if (!res.ok) throw new Error(res.statusText)
       setEditId(null); setEditTitle(''); await fetchTasks()
     } catch (err) {
-      if (isNetworkError(err)) { queueEdit(id, title) }
-      else { setError(err.message) }
+      queueEdit(id, title)
     }
   }
 
   async function deleteTask(id) {
     if (!window.confirm('¿Eliminar esta tarea?')) return
+    if (!isOnline) { queueDelete(id); return }
     const h = await authHeaders()
     if (!h) return
     try {
@@ -397,8 +402,7 @@ function App() {
       if (!res.ok) throw new Error(res.statusText)
       await fetchTasks()
     } catch (err) {
-      if (isNetworkError(err)) { queueDelete(id) }
-      else { setError(err.message) }
+      queueDelete(id)
     }
   }
 
