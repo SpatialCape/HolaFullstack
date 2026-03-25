@@ -123,8 +123,8 @@ function App() {
   const [authError, setAuthError] = useState(null)
   const [authLoading, setAuthLoading] = useState(false)
 
-  const [tasks, setTasks] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [tasks, setTasks] = useState(() => getCachedTasks())
+  const [loading, setLoading] = useState(() => getCachedTasks().length === 0)
   const [error, setError] = useState(null)
   const [newTitle, setNewTitle] = useState('')
   const [adding, setAdding] = useState(false)
@@ -137,28 +137,19 @@ function App() {
 
   const isAdmin = !!token
 
-  // Detectar conexion / desconexion
-  useEffect(() => {
-    function handleOffline() { setIsOnline(false) }
-    function handleOnline() {
-      setIsOnline(true)
-      setShowReconnect(true)
-      syncPendingOps()
-      setTimeout(() => setShowReconnect(false), 4000)
-    }
-    window.addEventListener('offline', handleOffline)
-    window.addEventListener('online', handleOnline)
-    return () => {
-      window.removeEventListener('offline', handleOffline)
-      window.removeEventListener('online', handleOnline)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  // Reconectar: sincronizar ops pendientes y refrescar
+  async function reconnect() {
+    setIsOnline(true)
+    setShowReconnect(true)
+    setError(null)
+    await syncPendingOps()
+    setTimeout(() => setShowReconnect(false), 4000)
+  }
 
   // Sincronizar operaciones pendientes
   async function syncPendingOps() {
     const ops = getPendingOps()
-    if (ops.length === 0) { fetchTasks(); return }
+    if (ops.length === 0) { await fetchTasks(); return }
     setSyncing(true)
     for (const op of ops) {
       try {
@@ -179,8 +170,42 @@ function App() {
     }
     savePendingOps([])
     setSyncing(false)
-    fetchTasks()
+    await fetchTasks()
   }
+
+  // Detectar conexion / desconexion + polling
+  useEffect(() => {
+    function handleOffline() { setIsOnline(false) }
+    function handleOnline() { reconnect() }
+    window.addEventListener('offline', handleOffline)
+    window.addEventListener('online', handleOnline)
+
+    // Polling: si estamos offline, intentar reconectar cada 5s
+    let interval
+    if (!isOnline) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch(`${API}/tasks`)
+          if (res.ok) { clearInterval(interval); reconnect() }
+        } catch { /* sigue offline */ }
+      }, 5000)
+    }
+
+    return () => {
+      window.removeEventListener('offline', handleOffline)
+      window.removeEventListener('online', handleOnline)
+      if (interval) clearInterval(interval)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, token])
+
+  // Al cargar la pagina: si hay ops pendientes y hay red, sincronizar
+  useEffect(() => {
+    if (token && getPendingOps().length > 0) {
+      syncPendingOps()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
 
   // Restaurar sesion guardada
   useEffect(() => {
